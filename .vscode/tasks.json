@@ -1,0 +1,42 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build CUDA extension",
+            "type": "shell",
+            "command": "cmd.exe",
+            "args": [
+                "/C",
+                "set DISTUTILS_USE_SDK=1 && \"C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\Common7\\Tools\\VsDevCmd.bat\" -arch=amd64 && ${workspaceFolder}\\.venv\\Scripts\\python.exe setup.py build_ext --inplace"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ]
+        },
+        {
+            "label": "Sort Python imports",
+            "type": "shell",
+            "command": "uvx", 
+            "args": [
+                "ruff",
+                "check",
+                "--select",
+                "I",
+                "--fix",
+                "."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

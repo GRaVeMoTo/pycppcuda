@@ -1,0 +1,16 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/.venv/Lib/site-packages/torch/include",
+                "${workspaceFolder}/.venv/Lib/site-packages/torch/include/torch/csrc/api/include"
+            ],
+            "defines": [],
+            "cStandard": "c20",
+            "cppStandard": "c++20"
+        }
+    ],
+    "version": 4
+}

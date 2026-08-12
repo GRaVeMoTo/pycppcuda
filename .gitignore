@@ -67,3 +67,11 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+.ruff_cache/
+output/
+*.pyd
+*.egg-info/
+__pycache__/
+
+#project
+output/
