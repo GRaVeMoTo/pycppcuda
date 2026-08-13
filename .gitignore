@@ -72,6 +72,7 @@ output/
 *.pyd
 *.egg-info/
 __pycache__/
+.codemie
 
 #project
 output/
