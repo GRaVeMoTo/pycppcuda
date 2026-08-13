@@ -21,7 +21,7 @@ IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
 def cpu_pytorch_blur(
     img_tensor: torch.Tensor,
     radius: int,
-    cicle: int = 1,
+    cicle: int,
     output_path: Path | None = None,
 ) -> list[float]:
     if cicle < 1:
@@ -41,6 +41,37 @@ def cpu_pytorch_blur(
     if output_path is not None and cpu_output is not None:
         cpu_img = transforms.ToPILImage()(cpu_output.squeeze(0))
         cpu_img.save(output_path)
+
+    return results
+
+
+def gpu_pytorch_blur(
+    img_tensor: torch.Tensor,
+    radius: int,
+    cicle: int,
+    output_path: Path | None = None,
+) -> list[float]:
+    if cicle < 1:
+        raise ValueError("repetitions must be at least 1")
+
+    filter_size = 2 * radius + 1
+    gpu_input = img_tensor.cuda()
+    conv_filter = torch.ones(3, 1, filter_size, filter_size, device="cuda") / (filter_size**2)
+    torch.cuda.synchronize()
+    results = []
+    gpu_output = None
+
+    for _ in range(cicle):
+        start = time.perf_counter()
+        gpu_output = torch.nn.functional.conv2d(gpu_input.unsqueeze(0), conv_filter, padding=radius, groups=3)
+        torch.cuda.synchronize()
+        results.append(time.perf_counter() - start)
+
+    if gpu_output is None:
+        raise RuntimeError("PyTorch GPU blur did not produce output")
+    if output_path is not None:
+        gpu_img = transforms.ToPILImage()(gpu_output.squeeze(0).cpu())
+        gpu_img.save(output_path)
 
     return results
 
@@ -122,7 +153,7 @@ def write_stat(
 
 
 def run(
-    fn: Callable,
+    fn: Callable[[torch.Tensor, int, int, Path | None], list[float]],
     type: str,
     image_path: Path,
     img: torch.Tensor,
@@ -139,6 +170,8 @@ def run(
         results = fn(img, radius, cicle, path)
         write_stat(writer, image_path.name, width, height, radius, type, results)
 
+        print(f"\t{type}: AVG {sum(results) / len(results):.6f} sec =< {min(results):.6f} .. {max(results):.6f} >=")
+
 
 def main() -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -150,32 +183,17 @@ def main() -> None:
         print(f"No test images in {IMAGES_DIR}!")
         return
 
-    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = write_stat_header(csv_file)
+    methods = [(cpu_pytorch_blur, "ptcpu"), (gpu_pytorch_blur, "ptgpu"), (gpu_blur, "cuda")]
 
-        for image_path in paths:
-            with Image.open(image_path) as source:
-                img = source.convert("RGB")
-                imageTensor = transforms.ToTensor()(img)
+    for m_fn, m_name in methods:
+        with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = write_stat_header(csv_file)
 
-            run(
-                cpu_pytorch_blur,
-                "ptcpu",
-                image_path,
-                imageTensor,
-                BLUR_RADII,
-                RUNS_COUNT,
-                writer,
-            )
-            run(
-                gpu_blur,
-                "cuda",
-                image_path,
-                imageTensor,
-                BLUR_RADII,
-                RUNS_COUNT,
-                writer,
-            )
+            for image_path in paths:
+                with Image.open(image_path) as source:
+                    img = transforms.ToTensor()(source.convert("RGB"))
+
+                run(m_fn, m_name, image_path, img, BLUR_RADII, RUNS_COUNT, writer)
 
     print(f"Running times: {csv_path}")
 
