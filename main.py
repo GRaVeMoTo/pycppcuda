@@ -1,6 +1,4 @@
 import csv
-import time
-from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,105 +6,16 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-import pycuda_extension
+from blurs import CudaBlur, CpuPyTorchBlur, GpuPyTorchBlur
+from config import BlurInterface, Config
 
 ROOT_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = ROOT_DIR / "images"
 OUTPUT_DIR = ROOT_DIR / "output"
-BLUR_RADII = [1, 2, 3, 5, 7, 9]
-RUNS_COUNT = 6
-IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
-
-
-def cpu_pytorch_blur(
-    img_tensor: torch.Tensor,
-    radius: int,
-    cicle: int,
-    output_path: Path | None = None,
-) -> list[float]:
-    if cicle < 1:
-        raise ValueError("repetitions must be at least 1")
-
-    filter_size = 2 * radius + 1
-    conv_filter = torch.ones(3, 1, filter_size, filter_size) / (filter_size**2)
-
-    results = []
-    cpu_input = img_tensor.unsqueeze(0)
-    cpu_output = None
-    for _ in range(cicle):
-        start = time.perf_counter()
-        cpu_output = torch.nn.functional.conv2d(cpu_input, conv_filter, padding=radius, groups=3)
-        results.append(time.perf_counter() - start)
-
-    if output_path is not None and cpu_output is not None:
-        cpu_img = transforms.ToPILImage()(cpu_output.squeeze(0))
-        cpu_img.save(output_path)
-
-    return results
-
-
-def gpu_pytorch_blur(
-    img_tensor: torch.Tensor,
-    radius: int,
-    cicle: int,
-    output_path: Path | None = None,
-) -> list[float]:
-    if cicle < 1:
-        raise ValueError("repetitions must be at least 1")
-
-    filter_size = 2 * radius + 1
-    gpu_input = img_tensor.cuda()
-    conv_filter = torch.ones(3, 1, filter_size, filter_size, device="cuda") / (filter_size**2)
-    torch.cuda.synchronize()
-    results = []
-    gpu_output = None
-
-    for _ in range(cicle):
-        start = time.perf_counter()
-        gpu_output = torch.nn.functional.conv2d(gpu_input.unsqueeze(0), conv_filter, padding=radius, groups=3)
-        torch.cuda.synchronize()
-        results.append(time.perf_counter() - start)
-
-    if gpu_output is None:
-        raise RuntimeError("PyTorch GPU blur did not produce output")
-    if output_path is not None:
-        gpu_img = transforms.ToPILImage()(gpu_output.squeeze(0).cpu())
-        gpu_img.save(output_path)
-
-    return results
-
-
-def gpu_blur(
-    img_tensor: torch.Tensor,
-    radius: int,
-    cicle: int,
-    output_path: Path | None = None,
-) -> list[float]:
-    if cicle < 1:
-        raise ValueError("repetitions must be at least 1")
-
-    gpu_input = img_tensor.cuda()
-    torch.cuda.synchronize()
-    results = []
-
-    gpu_output = None
-    for _ in range(cicle):
-        start = time.perf_counter()
-        gpu_output = pycuda_extension.blur(gpu_input, radius)
-        torch.cuda.synchronize()
-        results.append(time.perf_counter() - start)
-
-    if gpu_output is None:
-        raise RuntimeError("GPU blur did not produce output")
-    if output_path is not None:
-        gpu_img = transforms.ToPILImage()(gpu_output.cpu())
-        gpu_img.save(output_path)
-
-    return results
 
 
 def image_paths() -> list[Path]:
-    return sorted(path for path in IMAGES_DIR.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES)
+    return sorted(path for path in IMAGES_DIR.iterdir() if path.suffix.lower() in Config.IMAGE_SUFFIXES)
 
 
 def write_stat_header(csv_file) -> csv.DictWriter:
@@ -153,24 +62,27 @@ def write_stat(
 
 
 def run(
-    fn: Callable[[torch.Tensor, int, int, Path | None], list[float]],
+    blur: BlurInterface,
     type: str,
     image_path: Path,
     img: torch.Tensor,
-    radii: list[int],
-    cicle: int,
     writer: csv.DictWriter,
+    save_output: bool,
 ) -> None:
     height, width = img.shape[-2:]
 
-    for radius in radii:
+    for radius in Config.Blur.Radii:
         print(f"Process: {image_path.name} ({width}x{height}), radius={radius}")
-        path = OUTPUT_DIR / f"{image_path.stem}_r{radius}_{type}.png"
+        path = None
+        if save_output:
+            image_output_dir = OUTPUT_DIR / image_path.stem.split("_", maxsplit=1)[0]
+            image_output_dir.mkdir(exist_ok=True)
+            path = image_output_dir / f"{image_path.stem}_r{radius}_{type}.jpg"
 
-        results = fn(img, radius, cicle, path)
+        results = blur.Apply(img, radius, Config.Blur.RUNS_COUNT, path)
         write_stat(writer, image_path.name, width, height, radius, type, results)
 
-        print(f"\t{type}: AVG {sum(results) / len(results):.6f} sec =< {min(results):.6f} .. {max(results):.6f} >=")
+        print(f"\t{type}: AVG {sum(results) / len(results) * 1_000:.3f} ms =< {min(results) * 1_000:.3f} .. {max(results) * 1_000:.3f} >=")
 
 
 def main() -> None:
@@ -183,17 +95,23 @@ def main() -> None:
         print(f"No test images in {IMAGES_DIR}!")
         return
 
-    methods = [(cpu_pytorch_blur, "ptcpu"), (gpu_pytorch_blur, "ptgpu"), (gpu_blur, "cuda")]
+    methods = [(CpuPyTorchBlur(), "pt_cpu"), (GpuPyTorchBlur(), "pt_gpu"), (CudaBlur(), "cuda")]
+    largest_resolution = max(Config.RESOLUTIONS, key=lambda resolution: resolution[0] * resolution[1])
 
-    for m_fn, m_name in methods:
-        with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
-            writer = write_stat_header(csv_file)
+    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = write_stat_header(csv_file)
 
+        for blur, m_name in methods:
             for image_path in paths:
                 with Image.open(image_path) as source:
-                    img = transforms.ToTensor()(source.convert("RGB"))
+                    source_rgb = source.convert("RGB")
 
-                run(m_fn, m_name, image_path, img, BLUR_RADII, RUNS_COUNT, writer)
+                for width, height, _ in Config.RESOLUTIONS:
+                    resized = source_rgb.resize((width, height), Image.Resampling.LANCZOS)
+                    img = transforms.ToTensor()(resized)
+                    save_output = (width, height) == largest_resolution[:2]
+
+                    run(blur, m_name, image_path, img, writer, save_output)
 
     print(f"Running times: {csv_path}")
 
