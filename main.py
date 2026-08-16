@@ -1,3 +1,4 @@
+import argparse
 import csv
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,22 @@ from config import BlurInterface, Config
 ROOT_DIR = Path(__file__).resolve().parent
 IMAGES_DIR = ROOT_DIR / "images"
 OUTPUT_DIR = ROOT_DIR / "output"
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Benchmark image blur implementations.")
+    parser.add_argument(
+        "--blur",
+        choices=("pt_cpu", "pt_gpu", "pt_gpu_opt", "cuda", "cuda_opt"),
+        action="append",
+        help="Blur implementation to run. Repeat this option for multiple implementations.",
+    )
+    parser.add_argument(
+        "--output-csv",
+        type=Path,
+        help="CSV output path. Defaults to output/run_<UTC timestamp>.csv.",
+    )
+    return parser.parse_args()
 
 
 def image_paths() -> list[Path]:
@@ -38,27 +55,19 @@ def write_stat_header(csv_file) -> csv.DictWriter:
     return writer
 
 
-def write_stat(
-    writer: csv.DictWriter,
-    name: str,
-    width: int,
-    height: int,
-    radius: int,
-    type: str,
-    result: list[float],
-) -> None:
-    for iteration in range(len(result)):
-        writer.writerow(
-            {
-                "image": name,
-                "width": width,
-                "height": height,
-                "radius": radius,
-                "iteration": iteration,
-                "type": type,
-                "seconds": f"{result[iteration]:.6f}",
-            }
-        )
+def write_stat(writer: csv.DictWriter, name: str, width: int, height: int, radius: int, method: str, results: list[float]) -> None:
+    writer.writerows(
+        {
+            "image": name,
+            "width": width,
+            "height": height,
+            "radius": radius,
+            "iteration": iteration,
+            "type": method,
+            "seconds": f"{seconds:.6f}",
+        }
+        for iteration, seconds in enumerate(results)
+    )
 
 
 def run(
@@ -86,21 +95,26 @@ def run(
 
 
 def main() -> None:
+    arguments = parse_arguments()
     OUTPUT_DIR.mkdir(exist_ok=True)
     run_timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    csv_path = OUTPUT_DIR / f"run_{run_timestamp}.csv"
+    csv_path = arguments.output_csv or OUTPUT_DIR / f"run_{run_timestamp}.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     paths = image_paths()
 
     if not paths:
         print(f"No test images in {IMAGES_DIR}!")
         return
 
-    methods = [
-        (GpuPyTorchBlur(), "pt_gpu"),
-        (GpuPyTorchOptimizedBlur(), "pt_gpu_opt"),
-        (CudaBlur(), "cuda"),
-        (CudaOptimizedBlur(), "cuda_opt"),
-    ]
+    available_methods = {
+        "pt_cpu": CpuPyTorchBlur,
+        "pt_gpu": GpuPyTorchBlur,
+        "pt_gpu_opt": GpuPyTorchOptimizedBlur,
+        "cuda": CudaBlur,
+        "cuda_opt": CudaOptimizedBlur,
+    }
+    selected_methods = arguments.blur or ("pt_gpu", "pt_gpu_opt", "cuda", "cuda_opt")
+    methods = [(available_methods[name](), name) for name in selected_methods]
     largest_resolution = max(Config.RESOLUTIONS, key=lambda resolution: resolution[0] * resolution[1])
 
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
