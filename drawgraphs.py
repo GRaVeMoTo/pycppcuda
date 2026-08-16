@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -24,6 +25,21 @@ def latest_results_file() -> Path:
     raise FileNotFoundError(f"No non-empty run CSV files found in {OUTPUT_DIR}")
 
 
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Create a 3D blur benchmark chart.")
+    parser.add_argument(
+        "-csv",
+        type=Path,
+        help="Benchmark CSV file. Defaults to the latest output/run_*.csv file.",
+    )
+    parser.add_argument(
+        "-output",
+        type=Path,
+        help="Output image path. Defaults to output/<csv-name>_runtime_heatmap_3d.png.",
+    )
+    return parser.parse_args()
+
+
 def resolution_labels() -> tuple[list[str], dict[tuple[int, int], str]]:
     labels = []
     resolution_by_size = {}
@@ -34,7 +50,11 @@ def resolution_labels() -> tuple[list[str], dict[tuple[int, int], str]]:
 
 
 def main() -> None:
-    csv_path = latest_results_file()
+    arguments = parse_arguments()
+    csv_path = arguments.csv or latest_results_file()
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
     results = pd.read_csv(csv_path)
     labels, resolution_by_size = resolution_labels()
     results["resolution"] = [resolution_by_size.get((width, height)) for width, height in zip(results["width"], results["height"], strict=True)]
@@ -114,7 +134,8 @@ def main() -> None:
     colorbar.outline.set_edgecolor(GRID_COLOR)
     fig.suptitle("Average runtime by Resolution & Radius", y=1.0, color=TEXT_COLOR, fontsize=24)
     fig.subplots_adjust(left=0.03, right=0.97, bottom=0.1, top=0.9, wspace=0.0, hspace=0.0)
-    output_path = OUTPUT_DIR / f"{csv_path.stem}_runtime_heatmap_3d.png"
+    output_path = arguments.output or OUTPUT_DIR / f"{csv_path.stem}_runtime_heatmap_3d.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=180, bbox_inches="tight")
     print(f"3D heatmap saved: {output_path}")
 
