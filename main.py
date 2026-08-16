@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from blurs import CudaBlur, CudaOptimizedBlur, CpuPyTorchBlur, GpuPyTorchBlur, GpuPyTorchOptimizedBlur
+from blurs import CpuPyTorchBlur, CudaBlur, CudaOptimizedBlur, GpuPyTorchBlur, GpuPyTorchOptimizedBlur
 from config import BlurInterface, Config
 
 ROOT_DIR = Path(__file__).resolve().parent

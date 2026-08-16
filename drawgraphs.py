@@ -94,7 +94,7 @@ def main() -> None:
         heatmap_data = heatmap_data.reindex(index=labels, columns=radii)
         x, y = np.meshgrid(np.arange(len(labels)), np.arange(len(radii)))
         z = heatmap_data.to_numpy(dtype=float).T
-        surface = axis.plot_surface(
+        axis.plot_surface(
             x,
             y,
             z,
