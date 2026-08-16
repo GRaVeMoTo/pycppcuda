@@ -6,7 +6,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from blurs import CudaBlur, CpuPyTorchBlur, GpuPyTorchBlur
+from blurs import CudaBlur, CudaOptimizedBlur, CpuPyTorchBlur, GpuPyTorchBlur, GpuPyTorchOptimizedBlur
 from config import BlurInterface, Config
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -95,7 +95,12 @@ def main() -> None:
         print(f"No test images in {IMAGES_DIR}!")
         return
 
-    methods = [(CpuPyTorchBlur(), "pt_cpu"), (GpuPyTorchBlur(), "pt_gpu"), (CudaBlur(), "cuda")]
+    methods = [
+        (GpuPyTorchBlur(), "pt_gpu"),
+        (GpuPyTorchOptimizedBlur(), "pt_gpu_opt"),
+        (CudaBlur(), "cuda"),
+        (CudaOptimizedBlur(), "cuda_opt"),
+    ]
     largest_resolution = max(Config.RESOLUTIONS, key=lambda resolution: resolution[0] * resolution[1])
 
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
